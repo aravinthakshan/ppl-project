@@ -108,20 +108,33 @@ Fill in before finalising the report:
 
 ## 6. Results
 
-After running `python benchmark.py`, paste or `cat` `results/summary.md`
-here. Example shape of the final table:
+### 6.1 CPU half (measured on the dev Mac, 2026-04-17)
+
+Workload: 960 000 blocks × 8×8 float32 = 234 MB in, 234 MB out per trial.
+10 trials, 3 warmups.
 
 | Implementation | mean ms | ± std | GFLOP/s | M blocks/s | speedup |
 |---|---:|---:|---:|---:|---:|
-| Python CPU (numpy matmul) | … | … | … | … | 1.00× |
-| Python CPU (scipy.dctn)   | … | … | … | … | …     |
-| Python GPU (cuda, compute only) | … | … | … | … | …     |
-| Python GPU (cuda, +transfer)    | … | … | … | … | …     |
-| C CPU (threads=1)         | … | … | … | … | …     |
-| CUDA (compute only)       | … | … | … | … | …     |
-| CUDA (+transfer)          | … | … | … | … | …     |
+| Python CPU (`scipy.fft.dctn`, type=2, ortho) | 187.70 | 0.48 | 10.47 | 5.11 | 0.59× |
+| Python CPU (NumPy batched matmul) | 110.70 | 1.33 | 17.76 | 8.67 | **1.00× (baseline)** |
+| C CPU, `-O3 -ffast-math -march=native`, single thread | 57.40 | 0.17 | 34.25 | 16.73 | **1.93×** |
 
-Include the two plots in `results/plots/`:
+Correctness: NumPy matmul vs scipy reference, max |Δ| = `1.22e-4`, MSE = `4.2e-11` (float32 rounding noise — passes).
+
+Observations:
+- **C beats NumPy by 1.9× at the same algorithm** because NumPy dispatches one Python call that then calls BLAS twice per 960 k-batch, while the C loop's inner 8×8×8 is fully unrolled and vectorised (`-O3 -march=native`). NumPy's overhead isn't per-block (that would be ~100×), it's the two large `C @ X @ C.T` BLAS calls being slightly less optimal than a purpose-built 8×8 loop.
+- **scipy.dctn is slower than NumPy matmul here** — surprising to some, but scipy routes through pocketfft's general-N DCT which has more branching and scheduling overhead than a fused 8×8 basis. For N ≥ 32 scipy wins; at N=8 the matrix form is king.
+
+### 6.2 GPU half (to be run on Colab — see `run_on_colab.md`)
+
+| Implementation | mean ms | ± std | GFLOP/s | M blocks/s | speedup |
+|---|---:|---:|---:|---:|---:|
+| PyTorch CUDA, compute only  | _pending_ | | | | |
+| PyTorch CUDA, +H↔D transfer | _pending_ | | | | |
+| Hand-written CUDA, compute only | _pending_ | | | | |
+| Hand-written CUDA, +H↔D transfer | _pending_ | | | | |
+
+Plots in `results/plots/`:
 - `wall_time.png` — log-scale wall-clock time
 - `throughput.png` — GFLOP/s
 
