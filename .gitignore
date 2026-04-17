@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+
+data/_cifar10_raw/
+data/blocks.bin
+# data/meta.json is kept (small, useful to commit)
+
+results/*.json
+results/*.md
+results/plots/
+
+c/dct_cpu
+c/dct_gpu
+c/*.o
+
+.DS_Store

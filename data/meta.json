@@ -1,0 +1,13 @@
+{
+  "n_blocks": 960000,
+  "block_size": 8,
+  "dtype": "float32",
+  "byte_order": "little",
+  "source": "CIFAR-10 Y-channel (BT.601), centered (-128)",
+  "image_shape": [
+    32,
+    32
+  ],
+  "blocks_per_image": 16,
+  "bin_bytes": 245760000
+}
