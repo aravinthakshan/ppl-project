@@ -108,7 +108,7 @@ Fill in before finalising the report:
 
 ## 6. Results
 
-### 6.1 CPU half (measured on the dev Mac, 2026-04-17)
+### 6.1 Dev-Mac run (CPU-only, macOS, 2026-04-17)
 
 Workload: 960 000 blocks × 8×8 float32 = 234 MB in, 234 MB out per trial.
 10 trials, 3 warmups.
@@ -117,26 +117,51 @@ Workload: 960 000 blocks × 8×8 float32 = 234 MB in, 234 MB out per trial.
 |---|---:|---:|---:|---:|---:|
 | Python CPU (`scipy.fft.dctn`, type=2, ortho) | 187.70 | 0.48 | 10.47 | 5.11 | 0.59× |
 | Python CPU (NumPy batched matmul) | 110.70 | 1.33 | 17.76 | 8.67 | **1.00× (baseline)** |
-| C CPU, `-O3 -ffast-math -march=native`, single thread | 57.40 | 0.17 | 34.25 | 16.73 | **1.93×** |
+| C CPU, `-O3 -ffast-math -march=native`, single thread | **57.40** | 0.17 | **34.25** | 16.73 | **1.93×** |
 
-Correctness: NumPy matmul vs scipy reference, max |Δ| = `1.22e-4`, MSE = `4.2e-11` (float32 rounding noise — passes).
+Correctness: NumPy matmul vs scipy reference, max |Δ| = `1.22e-4`, MSE = `4.2e-11` (float32 rounding — passes).
 
-Observations:
-- **C beats NumPy by 1.9× at the same algorithm** because NumPy dispatches one Python call that then calls BLAS twice per 960 k-batch, while the C loop's inner 8×8×8 is fully unrolled and vectorised (`-O3 -march=native`). NumPy's overhead isn't per-block (that would be ~100×), it's the two large `C @ X @ C.T` BLAS calls being slightly less optimal than a purpose-built 8×8 loop.
-- **scipy.dctn is slower than NumPy matmul here** — surprising to some, but scipy routes through pocketfft's general-N DCT which has more branching and scheduling overhead than a fused 8×8 basis. For N ≥ 32 scipy wins; at N=8 the matrix form is king.
+### 6.2 Colab run (CPU + CUDA, NVIDIA L4, 2026-04-17)
 
-### 6.2 GPU half (to be run on Colab — see `run_on_colab.md`)
+Same data, same algorithm, same precision. 10 trials, 3 warmups.
 
 | Implementation | mean ms | ± std | GFLOP/s | M blocks/s | speedup |
 |---|---:|---:|---:|---:|---:|
-| PyTorch CUDA, compute only  | _pending_ | | | | |
-| PyTorch CUDA, +H↔D transfer | _pending_ | | | | |
-| Hand-written CUDA, compute only | _pending_ | | | | |
-| Hand-written CUDA, +H↔D transfer | _pending_ | | | | |
+| Python CPU (`scipy.fft.dctn`) | 535.50 | 1.74 | 3.67 | 1.79 | 0.77× |
+| Python CPU (NumPy batched matmul) | 479.94 | 1.35 | 4.10 | 2.00 | **1.00× (baseline)** |
+| C CPU, `-O3 -ffast-math`, single thread | _pending rebuild_ | | | | |
+| PyTorch **CUDA**, compute only  | **8.63**  | 0.49  | **227.94** | 111.30 | **55.6×** |
+| PyTorch **CUDA**, +H↔D transfer | 76.38 | 0.24 | 25.74 | 12.57 | **6.3×** |
+| Hand-written **CUDA** kernel, compute only  | **2.12** | 0.008 | **929.60** | 453.91 | **226×** |
+| Hand-written **CUDA** kernel, +H↔D transfer | 40.61 | 0.006 | 48.42 | 23.64 | **11.8×** |
 
-Plots in `results/plots/`:
-- `wall_time.png` — log-scale wall-clock time
-- `throughput.png` — GFLOP/s
+Correctness (Colab):
+- NumPy matmul vs `scipy.fft.dctn`: max |Δ| = `1.22e-4` (identical to Mac, fp32 rounding)
+- PyTorch CUDA vs NumPy:            max |Δ| = `1.22e-4`
+- Hand-written CUDA kernel vs NumPy reference: passes (same order of magnitude; embedded in `results/cuda.json`)
+
+### 6.3 Observations
+
+1. **Colab's CPU is ~4–5× slower than the Mac's**, so the Python CPU baseline on Colab (479.94 ms) is much worse than on the Mac (110.70 ms). **Do not compare CPU numbers across the two machines.** Speedups below are all *within* the Colab run.
+
+2. **The hand-written CUDA kernel beats PyTorch's CUDA by 4× on compute**  (2.12 ms vs 8.63 ms). PyTorch pays for cuBLAS setup, two separate `matmul` kernel launches, and kernel launch overhead; the hand-written kernel fuses both matmuls in shared memory, stores the basis in `__constant__` memory, and does everything in one launch. At 929 GFLOP/s we are **memory-bound, not compute-bound** (the L4 is ~242 GB/s peak; we read+write 468 MB ÷ 2.12 ms ≈ 221 GB/s, so we're at ~91% of memory bandwidth — the expected roofline for AI ≈ 4 flop/byte).
+
+3. **H↔D transfer costs more than the compute, by 19×.** 234 MB up + 234 MB down = 468 MB over PCIe Gen4 x16 (theoretical 32 GB/s, practically ~18–22 GB/s with overhead) → predicted 21–26 ms, measured 38.5 ms of pure transfer (40.61 − 2.12). If this DCT were a step in a larger on-GPU pipeline (e.g., a JPEG encoder that also runs quantization and entropy coding on GPU), we would keep data on-device and get the full 226× speedup. For a one-shot DCT from a CPU image, the effective speedup collapses to 11.8×.
+
+4. **scipy.dctn loses to numpy matmul on both machines** — expected at N=8. scipy's pocketfft routes through a general-N DCT-II with branching; the 8×8 matrix form beats it because the basis fits in L1 and the BLAS call (sgemm for 8×8) is fused into a single dense op.
+
+5. **Speedup summary (Colab, within-machine, vs `numpy matmul` = 1.0×):**
+
+   | Tier | What you get | Factor |
+   |---|---|---:|
+   | Python CPU → CUDA, realistic (+transfer) | PyTorch CUDA end-to-end | 6.3× |
+   | Python CPU → CUDA, realistic (+transfer) | Hand-written kernel end-to-end | 11.8× |
+   | Python CPU → CUDA, data already on device | PyTorch CUDA | 55.6× |
+   | Python CPU → CUDA, data already on device | Hand-written kernel | **226×** |
+
+Plots (`results/plots/`):
+- `wall_time.png` — log-scale wall-clock time across all implementations
+- `throughput.png` — GFLOP/s bar chart
 
 ## 7. Analysis — points to address
 

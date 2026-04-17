@@ -11,6 +11,7 @@
  * Output: JSON (stdout or --json path) with timing and correctness info.
  */
 
+#define _POSIX_C_SOURCE 200809L
 #include "common.h"
 #include <math.h>
 #include <stdio.h>
