@@ -64,8 +64,11 @@ def main() -> None:
     PLOTS.mkdir(exist_ok=True)
 
     meta_path = DATA_DIR / "meta.json"
-    if not meta_path.exists():
-        print("ERROR: data/meta.json not found. Run `python prepare_data.py` first.")
+    bin_path = DATA_DIR / "blocks.bin"
+    if not meta_path.exists() or not bin_path.exists():
+        print("ERROR: data not prepared. Run:")
+        print(f"    python prepare_data.py")
+        print(f"  (produces {bin_path} ~246 MB and {meta_path})")
         sys.exit(1)
     meta = json.loads(meta_path.read_text())
     n_blocks = meta["n_blocks"] if args.limit is None else min(meta["n_blocks"], args.limit)
